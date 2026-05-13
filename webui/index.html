@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="lv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wi-Fi iestatīšana</title>
+  <style>__STYLE__</style>
+</head>
+<body>
+  <div class="container" id="setupContainer">
+    <h2>Savienot ar Wi-Fi</h2>
+    <p>Izvēlaties savu tīklu un ievadat paroli.</p>
+    <form id="wifiForm">
+      <div id="loading" class="loading">Lādē tīklus...</div>
+      <div id="ssidList" class="ssid-list"></div>
+      <p id="scanHint" class="scan-hint hidden">Saraksts izveidots, startējot AP. <button type="button" id="rescanBtn" class="scan-hint-btn">Pārmeklēt no jauna</button></p>
+      <h2 id="passwordHeading" class="hidden">Parole</h2>
+      <input type="password" id="password" placeholder="Ievadi Wi-Fi paroli (atstāj tukšu, ja tīkls ir atvērts)" class="hidden">
+      <button type="button" id="editBtn" class="hidden">Mainīt paroli</button>
+      <button type="submit" id="submitBtn">Savienot</button>
+    </form>
+    <details id="settingsSection">
+      <summary>Iestatījumi</summary>
+      <div class="settings-content">
+        <h3>Cenu API URL</h3>
+        <input type="text" id="apiUrl" placeholder="https://teapots.cloud/elektriba/api/prices">
+        <div id="apiKeySection">
+          <h3>API atslēga</h3>
+          <input type="text" id="apiKey" placeholder="Atstāj tukšu, lai izmantotu noklusēto">
+        </div>
+        <div class="btn-row">
+          <button type="button" id="saveApiUrlBtn">Saglabāt</button>
+          <button type="button" id="deleteApiUrlBtn" class="btn-delete">Dzēst</button>
+        </div>
+        <p class="hint">Ja tukšs, tiek izmantota noklusētā API adrese un atslēga.</p>
+        <details class="api-format">
+          <summary>Sagaidāmais API formāts</summary>
+          <p>Ierīce izsauc: <code>&lt;bāzes_URL&gt;/YYYY-MM-DD?vat=true&resolution=60</code></p>
+          <p>Atbildes JSON struktūra:</p>
+          <pre>{
+  "prices": [
+    {
+      "start": "2024-01-01T00:00:00+02:00",
+      "value": 50.12
+    },
+    {
+      "start": "2024-01-01T01:00:00+02:00",
+      "value": 38.50
+    }
+  ]
+}</pre>
+          <p><strong>Prasības:</strong></p>
+          <ul>
+            <li><code>prices</code> — JSON masīvs, obligāts, vismaz 1 ieraksts</li>
+            <li><code>start</code> — ISO laikspiedols</li>
+            <li><code>value</code> — decimālskaitlis EUR/MWh (ar PVN)</li>
+          </ul>
+        </details>
+      </div>
+    </details>
+    <div class="status" id="statusMsg"></div>
+    <div class="status" id="actionMsg"></div>
+    <div id="postSubmitMsg" class="post-submit hidden">
+      <p class="instruction">Sekojat instrukcijām iekārtas displejā.</p>
+      <div id="pollStatus"></div>
+    </div>
+  </div>
+  <div class="container hidden" id="doneContainer">
+    <div class="done-icon">&#10003;</div>
+    <h2 class="done-title">Uzstādīšana pabeigta!</h2>
+    <p>Portāls tiek aizvērts un AP tiek atslēgts.<br>
+    Varat aizvērt lapu un savienoties atpakaļ ar interneta WiFi.</p>
+  </div>
+  <script>__SCRIPT__</script>
+</body>
+</html>

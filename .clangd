@@ -1,0 +1,6 @@
+CompileFlags:
+  Add:
+    - "-Itest"
+    - "-Isrc"
+    - "-Iinclude"
+    - "-std=c++17"

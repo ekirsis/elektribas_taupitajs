@@ -1,0 +1,25 @@
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  clang-analyzer-*,
+  performance-*,
+  portability-*,
+  readability-*,
+  -readability-magic-numbers,
+  -readability-identifier-naming,
+  -readability-identifier-length,
+  -readability-function-cognitive-complexity,
+  -readability-misplaced-array-index,
+  -readability-non-const-parameter,
+  modernize-*,
+  -modernize-use-trailing-return-type,
+  -modernize-avoid-c-arrays,
+  -modernize-raw-string-literal,
+  misc-*,
+  google-explicit-constructor
+
+CheckOptions:
+  - { key: modernize-concat-nested-namespaces.IgnoreMacros, value: true }
+
+WarningsAsErrors: "*"

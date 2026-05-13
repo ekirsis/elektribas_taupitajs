@@ -5,3 +5,8 @@ include/secrets.h
 # MemPalace per-project files (issue #185)
 mempalace.yaml
 entities.json
+src/wifi_setup_page.h
+compile_commands.json
+.cache/
+.junie
+.opencode
