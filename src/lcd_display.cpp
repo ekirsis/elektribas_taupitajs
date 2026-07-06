@@ -7,7 +7,7 @@
 
 namespace {
 
-void draw_centered_utf8_line(U8G2_ST7920_128X64_F_SW_SPI& display, const char* text, int y)
+void draw_centered_utf8_line(U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI& display, const char* text, int y)
 {
     int w = display.getUTF8Width(text);
     if (w > 124)
@@ -25,7 +25,7 @@ void draw_centered_utf8_line(U8G2_ST7920_128X64_F_SW_SPI& display, const char* t
 
 } // namespace
 
-void lcd_draw_message_impl(U8G2_ST7920_128X64_F_SW_SPI& display, const char* const* msg, size_t n)
+void lcd_draw_message_impl(U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI& display, const char* const* msg, size_t n)
 {
     display.clearBuffer();
     display.setFont(u8g2_font_helvR08_te);
@@ -38,7 +38,7 @@ void lcd_draw_message_impl(U8G2_ST7920_128X64_F_SW_SPI& display, const char* con
     display.sendBuffer();
 }
 
-void lcd_overlay_message(U8G2_ST7920_128X64_F_SW_SPI& display, const char* const* msg, size_t n)
+void lcd_overlay_message(U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI& display, const char* const* msg, size_t n)
 {
     display.setFont(u8g2_font_helvR08_te);
 
@@ -84,7 +84,7 @@ void work_task(void* p)
 
 } // namespace
 
-bool with_animation(U8G2_ST7920_128X64_F_SW_SPI& display, AnimID anim, char const* msg,
+bool with_animation(U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI& display, AnimID anim, char const* msg,
                     bool (*work_fn)(void*), void* arg)
 {
     WorkContext ctx{work_fn, arg, false, false};
@@ -103,7 +103,7 @@ bool with_animation(U8G2_ST7920_128X64_F_SW_SPI& display, AnimID anim, char cons
 
 namespace {
 
-void draw_price_row(U8G2_ST7920_128X64_F_SW_SPI& display, int y_baseline, int hour, float price_cents,
+void draw_price_row(U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI& display, int y_baseline, int hour, float price_cents,
                     bool is_main)
 {
     int const whole_part = static_cast<int>(price_cents);
@@ -149,7 +149,7 @@ float get_row_price(const std::vector<PriceEntry>& data, int current_hour, int o
 
 } // namespace
 
-void lcd_draw_prices(U8G2_ST7920_128X64_F_SW_SPI& display, const std::vector<PriceEntry>& data, int price_limit)
+void lcd_draw_prices(U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI& display, const std::vector<PriceEntry>& data, int price_limit)
 {
     const time_t now = time(nullptr);
     tm local_time{};

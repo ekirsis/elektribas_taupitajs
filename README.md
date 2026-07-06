@@ -1,8 +1,7 @@
 # Automātisks enerģijas taupītājs ar cenas limita funkcionalitāti un displeju.
 
 > C++17
-> Arduino Nano ESP32‑S3 + ST7920 128×64 LCD — shows Latvian hourly
-> electricity live spot price chart.
+> Arduino Nano ESP32‑S3 + SSD1309 128×64 OLED — shows Latvian live spot electricity price chart.
 
 **For personal use only. Not for commercial redistribution.**
 
@@ -21,20 +20,19 @@
 
 ## Hardware
 
-### LCD — ST7920 128×64 via software SPI
+### Display — SSD1309 128×64 OLED via software SPI
 
-U8g2 CS/RS framing mode — only CS, RS, RW are connected. Data and reset pins are unused.
+4‑wire SPI: CLK, MOSI, CS, DC. Reset pin connected.
 
-| LCD Pin | ESP32 Pin | Signal |
-|---------|-----------|--------|
-| CS      | 13        | Chip Select |
-| RS      | 11        | Register Select |
-| RW      | 10        | Read/Write |
-| VSS     | GND       | GND |
-| VDD     | 3.3V      | VCC |
-| V0      | Pot → GND | Contrast |
-| LED-    | GND       | Backlight – |
-| LED+    | 3.3V      | Backlight + |
+| OLED Pin | ESP32 Pin | Signal |
+|----------|-----------|--------|
+| CS       | 10        | Chip Select |
+| DC       | 12        | Data / Command |
+| MOSI     | 11        | Serial data |
+| CLK      | 13        | Serial clock |
+| RESET    | 14        | Reset (active low) |
+| VCC      | 3.3V      | Power |
+| GND      | GND       | Ground |
 
 ### Buttons & alert output
 

@@ -70,7 +70,7 @@ bool ap_button_pressed()
     return true;
 }
 
-bool handle_ap_button(U8G2_ST7920_128X64_F_SW_SPI& lcd)
+bool handle_ap_button(U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI& lcd)
 {
     static bool feedback_shown = false;
 
@@ -93,7 +93,7 @@ namespace {
 
 /// Scan visible WiFi networks, return their SSIDs.
 /// Aborts and returns empty if AP button is pressed (sets *cancelled).
-std::vector<String> wifi_scan_visible(U8G2_ST7920_128X64_F_SW_SPI& lcd, bool* cancelled = nullptr)
+std::vector<String> wifi_scan_visible(U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI& lcd, bool* cancelled = nullptr)
 {
     std::vector<String> visible;
     if (cancelled)
@@ -141,7 +141,7 @@ std::vector<String> wifi_scan_visible(U8G2_ST7920_128X64_F_SW_SPI& lcd, bool* ca
     return visible;
 }
 
-WifiResult wait_for_wifi_and_sync_time(U8G2_ST7920_128X64_F_SW_SPI& lcd, int max_seconds)
+WifiResult wait_for_wifi_and_sync_time(U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI& lcd, int max_seconds)
 {
     int frame = 0;
 
@@ -207,7 +207,7 @@ WifiResult wait_for_wifi_and_sync_time(U8G2_ST7920_128X64_F_SW_SPI& lcd, int max
 
 } // namespace
 
-WifiResult wifi_connect(U8G2_ST7920_128X64_F_SW_SPI& lcd)
+WifiResult wifi_connect(U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI& lcd)
 {
     if (ap_button_pending())
     {
@@ -235,7 +235,7 @@ WifiResult wifi_connect(U8G2_ST7920_128X64_F_SW_SPI& lcd)
     return wifi_try_saved_creds(lcd);
 }
 
-WifiResult wifi_try_saved_creds(U8G2_ST7920_128X64_F_SW_SPI& lcd)
+WifiResult wifi_try_saved_creds(U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI& lcd)
 {
     if (ap_button_pending())
     {
@@ -319,7 +319,7 @@ WifiResult wifi_try_saved_creds(U8G2_ST7920_128X64_F_SW_SPI& lcd)
 
 namespace {
 
-void show_ap_instructions(U8G2_ST7920_128X64_F_SW_SPI& lcd)
+void show_ap_instructions(U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI& lcd)
 {
     char pass_line[24];
     snprintf(pass_line, sizeof(pass_line), "parole: %s", wifi_setup_ap_password());
@@ -329,7 +329,7 @@ void show_ap_instructions(U8G2_ST7920_128X64_F_SW_SPI& lcd)
 
 } // namespace
 
-bool wifi_start_ap_mode(U8G2_ST7920_128X64_F_SW_SPI& lcd)
+bool wifi_start_ap_mode(U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI& lcd)
 {
     digitalWrite(PIN_ALERT, LOW);
     wifi_setup_generate_ap_password();
