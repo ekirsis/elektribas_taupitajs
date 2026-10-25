@@ -10,7 +10,7 @@
 #include "pins.h"
 #include "price_data_utils.h"
 
-U8G2_ST7920_128X64_F_SW_SPI lcd(U8G2_R0, 13, 11, 10);
+U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI lcd(U8G2_R0, 13, 11, 10, 12, 14);
 
 namespace {
 
@@ -148,25 +148,24 @@ bool fetch_date_work(void* arg)
 
 // ── Forward declarations ─────────────────────────────────────────────────
 
-void on_fetch_failed(int current_hour);
+void on_fetch_failed();
 void wifi_failed_fallback();
 bool ensure_prices(int hour);
-bool try_render_cached_prices(int hour);
+bool try_render_cached_prices();
 
 // ── Rendering helper ─────────────────────────────────────────────────────
 
 // Tries to render prices from the existing cache. Returns true on success
-// (data_ok set, screen drawn). Refuses to render when the clock isn't synced
-// so we never look up cache entries against bogus 1970-epoch date strings.
-bool try_render_cached_prices(int const current_hour)
+// (data_ok set, screen drawn). Refuses to render before the clock is synced,
+// because lookups are absolute-time based and an unsynced clock sits at the
+// 1970 epoch, where no cached entry can match.
+bool try_render_cached_prices()
 {
     if (!time_synced())
     {
         return false;
     }
-    char today_str[11];
-    get_current_date(today_str, sizeof(today_str));
-    if (can_draw_prices_for_dates(price_data, current_hour, today_str))
+    if (can_draw_prices_at(price_data, static_cast<int64_t>(time(nullptr))))
     {
         data_ok = true;
         lcd_draw_prices(lcd, price_data, price_limit);
@@ -192,14 +191,14 @@ void on_wifi_recovered()
     ensure_prices(local_time.tm_hour);
 }
 
-void on_fetch_failed(int current_hour)
+void on_fetch_failed()
 {
     if (WiFi.status() != WL_CONNECTED)
     {
         wifi_failed_fallback();
         return;
     }
-    if (try_render_cached_prices(current_hour))
+    if (try_render_cached_prices())
     {
         return;
     }
@@ -211,10 +210,7 @@ void on_fetch_failed(int current_hour)
 
 void show_cached_or_error()
 {
-    time_t const now = time(nullptr);
-    struct tm local_time{};
-    localtime_r(&now, &local_time);
-    if (try_render_cached_prices(local_time.tm_hour))
+    if (try_render_cached_prices())
     {
         return;
     }
@@ -225,10 +221,7 @@ void show_cached_or_error()
 
 void wifi_failed_fallback()
 {
-    time_t const now = time(nullptr);
-    struct tm local_time{};
-    localtime_r(&now, &local_time);
-    if (try_render_cached_prices(local_time.tm_hour))
+    if (try_render_cached_prices())
     {
         return;
     }
@@ -241,28 +234,49 @@ void wifi_failed_fallback()
 
 bool ensure_prices(int const current_hour)
 {
+    if (!time_synced())
+    {
+        // expected_hours_for_date() asks the C library how long a local civil
+        // day is, which needs the Latvian TZ that time_sync() exports and a
+        // sane clock.  Without both, day-length math and the fetch dates would
+        // be meaningless, so leave the cache untouched.
+        return false;
+    }
+
     char today_str[11];
     get_current_date(today_str, sizeof(today_str));
     char tomorrow_str[11];
     format_date_string(tomorrow_str, sizeof(tomorrow_str), 1);
 
+    int expected_today = expected_hours_for_date(today_str);
+    if (expected_today <= 0)
+    {
+        expected_today = 24;
+    }
+
     // Today — fetch if incomplete
-    if (count_entries(price_data, today_str) < 24)
+    if (count_entries(price_data, today_str) < expected_today)
     {
         FetchDateArg fetch_arg;
         strcpy(fetch_arg.date_str, today_str);
         if (!with_animation(lcd, AnimID::Globe, MSG_REFRESHING, fetch_date_work, &fetch_arg))
         {
-            on_fetch_failed(current_hour);
+            on_fetch_failed();
             return false;
         }
         merge_day(price_data, fetch_arg.day);
     }
 
+    int expected_tomorrow = expected_hours_for_date(tomorrow_str);
+    if (expected_tomorrow <= 0)
+    {
+        expected_tomorrow = 24;
+    }
+
     // Tomorrow (after 16:00). Throttled because tomorrow's prices can be
     // genuinely unpublished for hours — without this we'd hit the API on
     // every 5-minute loop iteration the whole evening.
-    if (current_hour >= 16 && count_entries(price_data, tomorrow_str) < 24)
+    if (current_hour >= 16 && count_entries(price_data, tomorrow_str) < expected_tomorrow)
     {
         unsigned long const now_ms = millis();
         bool const throttle_expired = (now_ms - last_tomorrow_attempt_ms) >= TOMORROW_RETRY_MS;
@@ -280,9 +294,9 @@ bool ensure_prices(int const current_hour)
     }
 
     // Final validation — check view window, render if not already drawn
-    if (!can_draw_prices_for_dates(price_data, current_hour, today_str))
+    if (!can_draw_prices_at(price_data, static_cast<int64_t>(time(nullptr))))
     {
-        on_fetch_failed(current_hour);
+        on_fetch_failed();
         return false;
     }
 
@@ -301,6 +315,17 @@ bool ensure_prices(int const current_hour)
 void setup()
 {
     lcd.begin();
+
+    // direct command sequence to set brightness
+    u8x8_cad_StartTransfer(lcd.getU8x8());
+    u8x8_cad_SendCmd(lcd.getU8x8(), 0x081); // set contrast
+    u8x8_cad_SendArg(lcd.getU8x8(), 0x080); // ~50% of full range
+    u8x8_cad_SendCmd(lcd.getU8x8(), 0x0d9); // pre-charge period
+    u8x8_cad_SendArg(lcd.getU8x8(), 0x011); // lowest
+    u8x8_cad_SendCmd(lcd.getU8x8(), 0x0db); // VCOMH deselect level
+    u8x8_cad_SendArg(lcd.getU8x8(), 0x000); // lowest
+    u8x8_cad_EndTransfer(lcd.getU8x8());
+
     lcd.enableUTF8Print();
     lcd.setFont(u8g2_font_helvR08_tr);
 

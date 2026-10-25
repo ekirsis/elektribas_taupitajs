@@ -1,113 +1,72 @@
 #pragma once
 
-#include <cstdio>
-#include <ctime>
 #include <stdint.h>
-#include <string.h>
 #include <vector>
 
+// Prices are stored with an absolute UTC timestamp.  A local date is only
+// used for grouping/pruning.  On a DST fall-back day two entries share the
+// local wall-clock hour 03:00, so a (date, hour) key is not sufficient.
 struct HourPrice
 {
-    uint8_t hour;
+    int64_t start_utc; // seconds since Unix epoch
     float eur_mwh;
 };
 
 struct PriceDay
 {
-    char date_string[11];
+    char date_string[11]; // requested local civil date
     std::vector<HourPrice> prices;
 };
 
 struct PriceEntry
 {
-    char date_string[11];
-    uint8_t hour;
+    char date_string[11]; // local civil date this entry belongs to
+    int64_t start_utc; // seconds since Unix epoch
     float eur_mwh;
 };
 
-inline void offset_date_string(const char* base_date, int day_offset, char* out, size_t out_size)
-{
-    struct tm tm = {};
-    sscanf(base_date, "%4d-%2d-%2d", &tm.tm_year, &tm.tm_mon, &tm.tm_mday);
-    tm.tm_year -= 1900;
-    tm.tm_mon -= 1;
-    tm.tm_mday += day_offset;
-    tm.tm_isdst = -1;
-    mktime(&tm);
-    strftime(out, out_size, "%Y-%m-%d", &tm);
-}
-
-inline bool resolve_view_hour(
-    int view_hour, const char* wallclock_prev, const char* wallclock_curr, const char* wallclock_next,
-    // NOLINTNEXTLINE(readability-named-parameter) — all params are named; false positive from continued-line def
-    const char*& out_date, uint8_t& out_needle)
-{
-    if (view_hour >= 48)
-    {
-        return false;
-    }
-    if (view_hour < 0)
-    { // NOLINT(bugprone-branch-clone) — false positive: each branch assigns different values
-        out_date = wallclock_prev;
-        out_needle = static_cast<uint8_t>(view_hour + 24);
-    }
-    else if (view_hour < 24)
-    {
-        out_date = wallclock_curr;
-        out_needle = static_cast<uint8_t>(view_hour);
-    }
-    else
-    {
-        out_date = wallclock_next;
-        out_needle = static_cast<uint8_t>(view_hour - 24);
-    }
-    return true;
-}
-
+// Find the hourly entry that covers `at_utc`.  Intervals are half-open:
+// [start, start + 1 hour).  This naturally handles both the duplicated
+// 03:00 hour in autumn and the missing 03:00 hour in spring.
 // NOLINTNEXTLINE(misc-unused-parameters) — false positive: <template> confused with parameter 'std'
-inline bool can_draw_prices_for_dates(const std::vector<PriceEntry>& data, int current_hour,
-                                      const char* wallclock_today)
+inline float find_price_at(const std::vector<PriceEntry>& data, int64_t at_utc, bool& found)
 {
-    char wallclock_prev[11];
-    char wallclock_next[11];
-    offset_date_string(wallclock_today, -1, wallclock_prev, sizeof(wallclock_prev));
-    offset_date_string(wallclock_today, 1, wallclock_next, sizeof(wallclock_next));
-
-    for (int view_hour = current_hour - 1; view_hour <= current_hour + 4; ++view_hour)
+    PriceEntry const* best = nullptr;
+    for (const auto& e : data)
     {
-        const char* date;
-        uint8_t needle;
-        if (!resolve_view_hour(view_hour, wallclock_prev, wallclock_today, wallclock_next, date, needle))
+        if (e.start_utc <= at_utc && at_utc < e.start_utc + 3600)
         {
-            return false;
-        }
-        bool found = false;
-        for (const auto& e : data)
-        {
-            if (strcmp(e.date_string, date) == 0 && e.hour == needle)
+            if (best == nullptr || e.start_utc > best->start_utc)
             {
-                found = true;
-                break;
+                best = &e;
             }
         }
+    }
+
+    if (best == nullptr)
+    {
+        found = false;
+        return 0.0F;
+    }
+
+    found = true;
+    return best->eur_mwh * 0.1f;
+}
+
+// The display shows the current hour plus the previous and next two hours.
+// Using absolute time rather than local-hour arithmetic makes this correct
+// across both DST transitions.
+// NOLINTNEXTLINE(misc-unused-parameters) — false positive: <template> confused with parameter 'std'
+inline bool can_draw_prices_at(const std::vector<PriceEntry>& data, int64_t now_utc)
+{
+    for (int offset = -1; offset <= 4; ++offset)
+    {
+        bool found = false;
+        find_price_at(data, now_utc + static_cast<int64_t>(offset) * 3600, found);
         if (!found)
         {
             return false;
         }
     }
     return true;
-}
-
-inline float find_price(const std::vector<PriceEntry>& data, const char* date, uint8_t hour, bool& found)
-{
-    for (const auto& e : data)
-    {
-        if (strcmp(e.date_string, date) == 0 && e.hour == hour)
-        {
-            found = true;
-            return e.eur_mwh * 0.1f;
-        }
-    }
-    found = false;
-    return 0.0F;
 }

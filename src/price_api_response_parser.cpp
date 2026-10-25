@@ -1,6 +1,10 @@
 #include "price_api_response_parser.h"
+#include "time_utils.h"
+
 #include <ArduinoJson.h>
+#include <algorithm>
 #include <cmath>
+#include <cstring>
 
 bool price_response_parse(const char* json_body, const char* expected_date, PriceDay& out)
 {
@@ -31,22 +35,47 @@ bool price_response_parse(const char* json_body, const char* expected_date, Pric
     }
     else if (document["start"].is<const char*>())
     {
-        const char* start = document["start"].as<const char*>();
-        snprintf(out.date_string, sizeof(out.date_string), "%s", start);
+        char const* start = document["start"].as<const char*>();
+        snprintf(out.date_string, sizeof(out.date_string), "%.10s", start);
+    }
+
+    if (out.date_string[0] == '\0')
+    {
+        return false;
     }
 
     for (JsonObject item : document["prices"].as<JsonArray>())
     {
-        const char* start_timestamp = item["start"].as<const char*>();
-        float price_value = item["value"].as<float>();
-        if (!start_timestamp || std::isnan(price_value))
+        char const* start_timestamp = item["start"].as<const char*>();
+        float const price_value = item["value"].as<float>();
+        if (start_timestamp == nullptr || std::isnan(price_value))
         {
             continue;
         }
 
-        uint8_t hour = static_cast<uint8_t>(atoi(start_timestamp + 11));
-        out.prices.push_back({hour, price_value});
+        // Each item is a local timestamp with an explicit offset.  The
+        // first ten characters must match the requested civil date; the
+        // absolute value distinguishes the two 03:00 entries in autumn.
+        if (std::strncmp(start_timestamp, out.date_string, 10) != 0)
+        {
+            continue;
+        }
+
+        int64_t start_utc = 0;
+        if (!time_utils::parse_iso8601_utc(start_timestamp, start_utc))
+        {
+            continue;
+        }
+
+        out.prices.push_back({start_utc, price_value});
     }
+
+    std::sort(out.prices.begin(), out.prices.end(),
+              [](HourPrice const& a, HourPrice const& b) { return a.start_utc < b.start_utc; });
+    out.prices.erase(
+        std::unique(out.prices.begin(), out.prices.end(),
+                    [](HourPrice const& a, HourPrice const& b) { return a.start_utc == b.start_utc; }),
+        out.prices.end());
 
     return !out.prices.empty();
 }

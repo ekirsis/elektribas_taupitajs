@@ -15,6 +15,7 @@
 #include <Arduino.h>
 #include <esp_sntp.h>
 #include "time_sync.h"
+#include "time_utils.h"
 
 namespace {
 time_t cached_synced_time = 0; // 0 = not synced yet
@@ -73,15 +74,7 @@ bool time_synced()
 
 void format_date_string(char* out_buffer, int buffer_length, int day_offset)
 {
-    time_t const now = time(nullptr);
-    tm local_time{};
-    localtime_r(&now, &local_time);
-
-    local_time.tm_mday += day_offset;
-    mktime(&local_time);
-
-    snprintf(out_buffer, buffer_length, "%04d-%02d-%02d", local_time.tm_year + 1900, local_time.tm_mon + 1,
-             local_time.tm_mday);
+    time_utils::format_local_date_at(time(nullptr), day_offset, out_buffer, static_cast<size_t>(buffer_length));
 }
 
 void get_current_date(char* out_buffer, int buffer_length)

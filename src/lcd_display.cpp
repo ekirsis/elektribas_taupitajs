@@ -1,13 +1,14 @@
 #include <Arduino.h>
 #include <esp_task_wdt.h>
+#include <ctime>
 #include "lcd_display.h"
 #include "price_chart.h"
-#include "time_sync.h"
+#include "time_utils.h"
 #include "pins.h"
 
 namespace {
 
-void draw_centered_utf8_line(U8G2_ST7920_128X64_F_SW_SPI& display, const char* text, int y)
+void draw_centered_utf8_line(U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI& display, const char* text, int y)
 {
     int w = display.getUTF8Width(text);
     if (w > 124)
@@ -25,7 +26,7 @@ void draw_centered_utf8_line(U8G2_ST7920_128X64_F_SW_SPI& display, const char* t
 
 } // namespace
 
-void lcd_draw_message_impl(U8G2_ST7920_128X64_F_SW_SPI& display, const char* const* msg, size_t n)
+void lcd_draw_message_impl(U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI& display, const char* const* msg, size_t n)
 {
     display.clearBuffer();
     display.setFont(u8g2_font_helvR08_te);
@@ -38,7 +39,7 @@ void lcd_draw_message_impl(U8G2_ST7920_128X64_F_SW_SPI& display, const char* con
     display.sendBuffer();
 }
 
-void lcd_overlay_message(U8G2_ST7920_128X64_F_SW_SPI& display, const char* const* msg, size_t n)
+void lcd_overlay_message(U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI& display, const char* const* msg, size_t n)
 {
     display.setFont(u8g2_font_helvR08_te);
 
@@ -84,7 +85,7 @@ void work_task(void* p)
 
 } // namespace
 
-bool with_animation(U8G2_ST7920_128X64_F_SW_SPI& display, AnimID anim, char const* msg,
+bool with_animation(U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI& display, AnimID anim, char const* msg,
                     bool (*work_fn)(void*), void* arg)
 {
     WorkContext ctx{work_fn, arg, false, false};
@@ -103,8 +104,8 @@ bool with_animation(U8G2_ST7920_128X64_F_SW_SPI& display, AnimID anim, char cons
 
 namespace {
 
-void draw_price_row(U8G2_ST7920_128X64_F_SW_SPI& display, int y_baseline, int hour, float price_cents,
-                    bool is_main)
+void draw_price_row(U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI& display, int y_baseline, const char* hour_range,
+                    float price_cents, bool is_main)
 {
     int const whole_part = static_cast<int>(price_cents);
     int frac_part = static_cast<int>(lroundf((price_cents - static_cast<float>(whole_part)) * 100.0F));
@@ -125,49 +126,24 @@ void draw_price_row(U8G2_ST7920_128X64_F_SW_SPI& display, int y_baseline, int ho
     }
     else
     {
-        snprintf(line_buffer, sizeof(line_buffer), "%02d:00-%02d:00  %d.%02d c/kWh", hour, (hour + 1) % 24,
-                 whole_part, frac_part);
+        // The single-label case (autumn's first 03:00 slot) is handled by
+        // time_utils::format_hour_range.
+        snprintf(line_buffer, sizeof(line_buffer), "%s  %d.%02d c/kWh", hour_range, whole_part, frac_part);
         display.setFont(u8g2_font_helvR08_tr);
     }
     display.setFontPosBaseline();
     display.drawUTF8(is_main ? 1 : 0, y_baseline, line_buffer);
 }
 
-float get_row_price(const std::vector<PriceEntry>& data, int current_hour, int offset, const char* today_str,
-                    const char* tomorrow_str, const char* yesterday_str, bool& found)
-{
-    const int view_hour = current_hour + offset;
-    const char* date;
-    uint8_t needle;
-    if (!resolve_view_hour(view_hour, yesterday_str, today_str, tomorrow_str, date, needle))
-    {
-        found = false;
-        return 0.0F;
-    }
-    return find_price(data, date, needle, found);
-}
-
 } // namespace
 
-void lcd_draw_prices(U8G2_ST7920_128X64_F_SW_SPI& display, const std::vector<PriceEntry>& data, int price_limit)
+void lcd_draw_prices(U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI& display, const std::vector<PriceEntry>& data,
+                     int price_limit)
 {
-    const time_t now = time(nullptr);
-    tm local_time{};
-    localtime_r(&now, &local_time);
-    const int current_hour = local_time.tm_hour;
-    const int current_minute = local_time.tm_min;
+    time_t const now = time(nullptr);
 
-    char yesterday_str[11];
-    char today_str[11];
-    char tomorrow_str[11];
-    format_date_string(yesterday_str, sizeof(yesterday_str), -1);
-    get_current_date(today_str, sizeof(today_str));
-    format_date_string(tomorrow_str, sizeof(tomorrow_str), 1);
-
-    bool main_found_tmp = false; // NOLINT: mutated by find_price via bool&
-    const float main_price_cents =
-        find_price(data, today_str, static_cast<uint8_t>(current_hour), main_found_tmp);
-    const bool main_found = main_found_tmp;
+    bool main_found = false; // NOLINT: mutated by find_price_at via bool&
+    const float main_price_cents = find_price_at(data, static_cast<int64_t>(now), main_found);
     if (!main_found)
     {
         display.clearBuffer();
@@ -179,18 +155,20 @@ void lcd_draw_prices(U8G2_ST7920_128X64_F_SW_SPI& display, const std::vector<Pri
     static constexpr int ROW_Y_BASELINE[4] = {8, 24, 35, 45};
     static constexpr int HOUR_OFFSET[4] = {-1, 0, 1, 2};
 
-    bool row_found_tmp[4] = {}; // NOLINT: mutated by get_row_price via bool&
-    const float row_prices_cents[4] = {
-        get_row_price(data, current_hour, HOUR_OFFSET[0], today_str, tomorrow_str, yesterday_str,
-                      row_found_tmp[0]),
-        get_row_price(data, current_hour, HOUR_OFFSET[1], today_str, tomorrow_str, yesterday_str,
-                      row_found_tmp[1]),
-        get_row_price(data, current_hour, HOUR_OFFSET[2], today_str, tomorrow_str, yesterday_str,
-                      row_found_tmp[2]),
-        get_row_price(data, current_hour, HOUR_OFFSET[3], today_str, tomorrow_str, yesterday_str,
-                      row_found_tmp[3]),
-    };
-    const bool (&row_found)[4] = row_found_tmp;
+    bool row_found[4] = {};
+    float row_prices_cents[4] = {};
+    char row_hour_range[4][16] = {};
+
+    for (int i = 0; i < 4; ++i)
+    {
+        time_t const row_time = now + static_cast<time_t>(HOUR_OFFSET[i]) * 3600;
+        bool row_hit = false; // NOLINT: mutated by find_price_at via bool&
+        float const row_cents = find_price_at(data, static_cast<int64_t>(row_time), row_hit);
+        row_found[i] = row_hit;
+        row_prices_cents[i] = row_cents;
+        time_utils::format_hour_range(static_cast<int64_t>(row_time), static_cast<int64_t>(row_time) + 3600,
+                                      row_hour_range[i], sizeof(row_hour_range[i]));
+    }
 
     display.clearBuffer();
 
@@ -206,25 +184,16 @@ void lcd_draw_prices(U8G2_ST7920_128X64_F_SW_SPI& display, const std::vector<Pri
 
         if (i == 1)
         {
-            draw_price_row(display, ROW_Y_BASELINE[i], current_hour, main_price_cents, true);
+            draw_price_row(display, ROW_Y_BASELINE[i], "", main_price_cents, true);
         }
         else
         {
-            int label_hour = current_hour + HOUR_OFFSET[i];
-            if (label_hour >= 24)
-            {
-                label_hour -= 24;
-            }
-            else if (label_hour < 0)
-            {
-                label_hour += 24;
-            }
-            draw_price_row(display, ROW_Y_BASELINE[i], label_hour, row_prices_cents[i], false);
+            draw_price_row(display, ROW_Y_BASELINE[i], row_hour_range[i], row_prices_cents[i], false);
         }
     }
 
     int const chart_y_top = ROW_Y_BASELINE[3] + 5;
-    draw_price_chart(display, data, current_hour, current_minute, chart_y_top, price_limit);
+    draw_price_chart(display, data, now, chart_y_top, price_limit);
 
     char limit_buf[4];
     snprintf(limit_buf, sizeof(limit_buf), "%2d", price_limit);
