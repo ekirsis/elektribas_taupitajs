@@ -1,7 +1,8 @@
 # Automātisks enerģijas taupītājs ar cenas limita funkcionalitāti un displeju.
 
 > C++17
-> Arduino Nano ESP32‑S3 + SSD1309 128×64 OLED — shows Latvian live spot electricity price chart.
+> Arduino Nano ESP32‑S3 + ST7920 128×64 LCD — shows Latvian hourly
+> electricity live spot price chart.
 
 **For personal use only. Not for commercial redistribution.**
 
@@ -20,19 +21,20 @@
 
 ## Hardware
 
-### Display — SSD1309 128×64 OLED via software SPI
+### LCD — ST7920 128×64 via software SPI
 
-4‑wire SPI: CLK, MOSI, CS, DC. Reset pin connected.
+U8g2 CS/RS framing mode — only CS, RS, RW are connected. Data and reset pins are unused.
 
-| OLED Pin | ESP32 Pin | Signal |
-|----------|-----------|--------|
-| CS       | 10        | Chip Select |
-| DC       | 12        | Data / Command |
-| MOSI     | 11        | Serial data |
-| CLK      | 13        | Serial clock |
-| RESET    | 14        | Reset (active low) |
-| VCC      | 3.3V      | Power |
-| GND      | GND       | Ground |
+| LCD Pin | ESP32 Pin | Signal |
+|---------|-----------|--------|
+| CS      | 13        | Chip Select |
+| RS      | 11        | Register Select |
+| RW      | 10        | Read/Write |
+| VSS     | GND       | GND |
+| VDD     | 3.3V      | VCC |
+| V0      | Pot → GND | Contrast |
+| LED-    | GND       | Backlight – |
+| LED+    | 3.3V      | Backlight + |
 
 ### Buttons & alert output
 
@@ -108,6 +110,19 @@ Fetched days are stored in a single flat `std::vector<PriceEntry>` vector. Each 
 | `src/price_fetch.cpp` | HTTP fetch, URL/key cache, sanitisation, override, NVS persistence | ArduinoJson, HTTPClient, Preferences |
 
 The fetch layer (`src/price_fetch.cpp`) manages a runtime cache of URL and API key. If a custom URL is saved in NVS (`api_url`), it is used; otherwise the compile-time default `PRICE_API_DEFAULT_URL` is used. If a custom key is saved (`api_key`), it overrides the compile-time `PRICE_API_KEY` for the default URL; custom URLs use only the saved key (no fallback). The `X-API-Key` header is omitted entirely when key is empty. The returned `PriceDay` is merged into `price_data` via `merge_day` only if it contains exactly `expected_hours_for_date` entries — 23, 24 or 25 depending on DST; partial responses are silently rejected, preventing corruption of previously cached data.
+
+---
+
+### Local time zone
+
+`src/time_sync.cpp` exports `LATVIAN_TZ = "EET-2EEST-3,M3.5.0/3:00:00,M10.5.0/4:00:00"` via `setenv("TZ")` + `tzset()`, so the C library — and every day-length/offset query above it — resolves Latvian EET/EEST. `ensure_prices()` refuses to run before `time_synced()` is true: `expected_hours_for_date()` asks the C library how long a local civil day is, which needs both that TZ and a sane clock, so pre-sync day-length math and fetch dates are meaningless.
+
+Both transitions land at **01:00 UTC** — i.e. 03:00 local winter time / 04:00 local summer time — on the last Sunday of March and the last Sunday of October:
+
+- `2026-03-29 02:59:59 EET → 04:00:00 EEST` — `03:00–03:59` doesn't exist, the day is 23 hours
+- `2026-10-25 03:59:59 EEST → 03:00:00 EET` — `03:00–03:59` happens twice, the day is 25 hours
+
+Midnight is never involved, which is why a civil date is always exactly one calendar day wide (`00:00 → 00:00`) and stays a safe key for whole-day replacement, pruning and the API request date. Only the single `03:00` hour *inside* the day is irregular — which is why day length (`local_day_hours`) and entry identity (`start_utc`) are tracked separately instead of being collapsed into a `(date, hour)` key.
 
 ---
 

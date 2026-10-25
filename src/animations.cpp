@@ -56,7 +56,7 @@ LatTrig const* get_lat_trig()
     return table;
 }
 
-void draw_globe_frame(U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI& display, int frame)
+void draw_globe_frame(U8G2_ST7920_128X64_F_SW_SPI& display, int frame)
 {
     display.clearBuffer();
 
@@ -143,7 +143,7 @@ void draw_globe_frame(U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI& display, int fram
 
 } // namespace
 
-void anim_draw_frame(U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI& display, AnimID anim, int frame)
+void anim_draw_frame(U8G2_ST7920_128X64_F_SW_SPI& display, AnimID anim, int frame)
 {
     (void)anim;
     draw_globe_frame(display, frame);

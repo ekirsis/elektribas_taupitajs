@@ -9,7 +9,7 @@
 
 #include <Arduino.h>
 
-class U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI;
+class U8G2_ST7920_128X64_F_SW_SPI;
 
 enum class WifiResult
 {
@@ -21,7 +21,7 @@ enum class WifiResult
 /// Try saved credentials (NVS recall + Preferences). Returns Connected on success,
 /// Cancelled if user pressed the AP button, Failed on timeout / no creds.
 /// Does NOT start the captive portal — caller handles failure / cancellation.
-WifiResult wifi_connect(U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI& lcd);
+WifiResult wifi_connect(U8G2_ST7920_128X64_F_SW_SPI& lcd);
 
 /// ISR handler for the AP button (FALLING edge).
 void IRAM_ATTR ap_isr();
@@ -38,16 +38,16 @@ void ap_reset();
 /// Check AP button in the main loop: shows "Uzstādīšana..." feedback when
 /// pending, returns true once the 500ms hold is confirmed (caller handles
 /// recovery and should return from loop()).
-bool handle_ap_button(U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI& lcd);
+bool handle_ap_button(U8G2_ST7920_128X64_F_SW_SPI& lcd);
 
 /// Start captive‑portal AP mode. Blocks until the user configures WiFi
 /// and time is synced, or cancels via AP button.
 /// Returns true if Synced, false if cancelled.
-bool wifi_start_ap_mode(U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI& lcd);
+bool wifi_start_ap_mode(U8G2_ST7920_128X64_F_SW_SPI& lcd);
 
 /// Try all saved Preferences credentials in order (3s timeout each).
 /// Shows per-SSID failure feedback on lcd if all attempts fail.
-WifiResult wifi_try_saved_creds(U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI& lcd);
+WifiResult wifi_try_saved_creds(U8G2_ST7920_128X64_F_SW_SPI& lcd);
 
 /// Returns true if at least one network is saved in Preferences.
 bool wifi_has_saved_creds();

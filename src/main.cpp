@@ -10,7 +10,7 @@
 #include "pins.h"
 #include "price_data_utils.h"
 
-U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI lcd(U8G2_R0, 13, 11, 10, 12, 14);
+U8G2_ST7920_128X64_F_SW_SPI lcd(U8G2_R0, 13, 11, 10);
 
 namespace {
 
@@ -315,16 +315,6 @@ bool ensure_prices(int const current_hour)
 void setup()
 {
     lcd.begin();
-
-    // direct command sequence to set brightness
-    u8x8_cad_StartTransfer(lcd.getU8x8());
-    u8x8_cad_SendCmd(lcd.getU8x8(), 0x081); // set contrast
-    u8x8_cad_SendArg(lcd.getU8x8(), 0x080); // ~50% of full range
-    u8x8_cad_SendCmd(lcd.getU8x8(), 0x0d9); // pre-charge period
-    u8x8_cad_SendArg(lcd.getU8x8(), 0x011); // lowest
-    u8x8_cad_SendCmd(lcd.getU8x8(), 0x0db); // VCOMH deselect level
-    u8x8_cad_SendArg(lcd.getU8x8(), 0x000); // lowest
-    u8x8_cad_EndTransfer(lcd.getU8x8());
 
     lcd.enableUTF8Print();
     lcd.setFont(u8g2_font_helvR08_tr);
