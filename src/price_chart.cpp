@@ -1,12 +1,12 @@
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include "price_chart.h"
-#include "time_sync.h"
 
 namespace {
 struct HourChartPoint
 {
-    int hour; // 0–47 (24+ = tomorrow)
+    int64_t start_utc;
     float cents; // price in c/kWh
 };
 
@@ -20,44 +20,32 @@ int round_to_int(float v)
 
 std::vector<HourChartPoint> collect_sorted_points(const std::vector<PriceEntry>& data)
 {
-    char yesterday_str[11];
-    char today_str[11];
-    char tomorrow_str[11];
-    format_date_string(yesterday_str, sizeof(yesterday_str), -1);
-    get_current_date(today_str, sizeof(today_str));
-    format_date_string(tomorrow_str, sizeof(tomorrow_str), 1);
-
     std::vector<HourChartPoint> points;
+    points.reserve(data.size());
     for (const auto& e : data)
     {
-        int view_hour;
-        if (strcmp(e.date_string, today_str) == 0)
-            view_hour = e.hour;
-        else if (strcmp(e.date_string, tomorrow_str) == 0)
-            view_hour = e.hour + 24;
-        else if (strcmp(e.date_string, yesterday_str) == 0)
-            view_hour = e.hour - 24;
-        else
-            continue;
-        points.push_back({view_hour, e.eur_mwh * 0.1f});
-    }
-
-    if (points.size() < 2)
-    {
-        return points;
+        points.push_back({e.start_utc, e.eur_mwh * 0.1f});
     }
 
     std::sort(points.begin(), points.end(),
-              [](const HourChartPoint& a, const HourChartPoint& b) { return a.hour < b.hour; });
+              [](const HourChartPoint& a, const HourChartPoint& b) { return a.start_utc < b.start_utc; });
+    points.erase(std::unique(points.begin(), points.end(),
+                             [](const HourChartPoint& a, const HourChartPoint& b) {
+                                 return a.start_utc == b.start_utc;
+                             }),
+                 points.end());
 
     return points;
 }
 
-int find_index_by_hour(const std::vector<HourChartPoint>& points, int hour)
+// Index of the hourly point covering `at_utc`, or -1.  Intervals are
+// half-open so the duplicated 03:00 slot in autumn resolves to the correct
+// absolute hour.
+int find_index_at(const std::vector<HourChartPoint>& points, int64_t at_utc)
 {
     for (size_t i = 0; i < points.size(); ++i)
     {
-        if (points[i].hour == hour)
+        if (points[i].start_utc <= at_utc && at_utc < points[i].start_utc + 3600)
         {
             return static_cast<int>(i);
         }
@@ -97,34 +85,33 @@ int clamp_dot_x(int x)
     return x;
 }
 
-bool interpolated_dot_pos(const std::vector<HourChartPoint>& points, int current_hour, int current_minute,
-                          float min_price, float inv_range, int chart_y_range, int chart_y_top, int n,
-                          int* out_x, int* out_y)
+bool interpolated_dot_pos(const std::vector<HourChartPoint>& points, int64_t now_utc, float min_price,
+                          float inv_range, int chart_y_range, int chart_y_top, int n, int* out_x, int* out_y)
 {
-    float const frac = static_cast<float>(current_minute) / 60.0F;
+    int const cur = find_index_at(points, now_utc);
+    if (cur < 0)
+    {
+        return false;
+    }
 
-    int cur = find_index_by_hour(points, current_hour);
-    int nxt = find_index_by_hour(points, current_hour + 1);
+    int const nxt = cur + 1;
+    float const frac = static_cast<float>(now_utc - points[cur].start_utc) / 3600.0F;
 
     int x;
     int y;
-    if (cur >= 0 && nxt >= 0)
+    if (nxt < n)
     {
         int const x_cur = cur * CHART_RIGHT / (n - 1);
         int const x_nxt = nxt * CHART_RIGHT / (n - 1);
-        float y_cur = price_to_y(points[cur].cents, min_price, inv_range, chart_y_range);
-        float y_nxt = price_to_y(points[nxt].cents, min_price, inv_range, chart_y_range);
+        float const y_cur = price_to_y(points[cur].cents, min_price, inv_range, chart_y_range);
+        float const y_nxt = price_to_y(points[nxt].cents, min_price, inv_range, chart_y_range);
         x = round_to_int(static_cast<float>(x_cur) + frac * static_cast<float>(x_nxt - x_cur));
         y = round_to_int(y_cur + frac * (y_nxt - y_cur));
     }
-    else if (cur >= 0)
+    else
     {
         x = cur * CHART_RIGHT / (n - 1);
         y = price_to_y(points[cur].cents, min_price, inv_range, chart_y_range);
-    }
-    else
-    {
-        return false;
     }
 
     *out_x = clamp_dot_x(x);
@@ -134,37 +121,44 @@ bool interpolated_dot_pos(const std::vector<HourChartPoint>& points, int current
 } // namespace
 
 void draw_price_chart(U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI& display, const std::vector<PriceEntry>& data,
-                      int current_hour, int current_minute, int chart_y_top, int price_limit)
+                      time_t now, int chart_y_top, int price_limit)
 {
-    auto points = collect_sorted_points(data);
-    if (points.size() < 2)
+    auto all_points = collect_sorted_points(data);
+    if (all_points.size() < 2)
     {
         return;
     }
 
-    int const min_hour = current_hour - 1;
-    int const max_hour = current_hour + 8;
-    points.erase(std::remove_if(points.begin(), points.end(),
-                                [min_hour, max_hour](const HourChartPoint& p) {
-                                    return p.hour < min_hour || p.hour > max_hour;
-                                }),
-                 points.end());
-    if (points.size() < 2)
+    auto const now_utc = static_cast<int64_t>(now);
+    int const current_index = find_index_at(all_points, now_utc);
+    if (current_index < 0)
     {
         return;
     }
+
+    // Keep the same ten-hour window as before (current - 1 through
+    // current + 8) but select it by absolute time.  On a DST day the
+    // window may contain a duplicated or missing wall-clock hour.
+    int const first = std::max(0, current_index - 1);
+    int const last = std::min(static_cast<int>(all_points.size()) - 1, current_index + 8);
+    std::vector<HourChartPoint> points(all_points.begin() + first, all_points.begin() + last + 1);
 
     int chart_y_range = CHART_Y_BOTTOM - chart_y_top;
     int n = static_cast<int>(points.size());
 
     float min_price = points[0].cents;
-    float max_price = points[0].cents;
+    // NOLINTNEXTLINE(misc-const-correctness) — false positive: the min/max loop below assigns it
+    float max_price = min_price;
     for (const auto& pt : points)
     {
         if (pt.cents < min_price)
+        {
             min_price = pt.cents;
+        }
         if (pt.cents > max_price)
+        {
             max_price = pt.cents;
+        }
     }
 
     float const range = max_price - min_price;
@@ -183,7 +177,7 @@ void draw_price_chart(U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI& display, const st
 
         int dx;
         int dy;
-        if (interpolated_dot_pos(points, current_hour, current_minute, 0, 1.0F, 0, chart_y_top, n, &dx, &dy))
+        if (interpolated_dot_pos(points, now_utc, 0, 1.0F, 0, chart_y_top, n, &dx, &dy))
         {
             display.drawRFrame(dx - 1, chart_y_top - 3, 4, CHART_Y_BOTTOM - chart_y_top + 4, 1);
         }
@@ -192,7 +186,7 @@ void draw_price_chart(U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI& display, const st
 
     float inv_range = 1.0F / range;
 
-    int cur_seg = find_index_by_hour(points, current_hour);
+    int const cur_seg = find_index_at(points, now_utc);
 
     for (int i = 0; i < n - 1; ++i)
     {
@@ -220,8 +214,7 @@ void draw_price_chart(U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI& display, const st
 
     int dx;
     int dy;
-    if (interpolated_dot_pos(points, current_hour, current_minute, min_price, inv_range, chart_y_range,
-                             chart_y_top, n, &dx, &dy))
+    if (interpolated_dot_pos(points, now_utc, min_price, inv_range, chart_y_range, chart_y_top, n, &dx, &dy))
     {
         display.drawRFrame(dx - 1, chart_y_top - 3, 4, CHART_Y_BOTTOM - chart_y_top + 4, 1);
     }

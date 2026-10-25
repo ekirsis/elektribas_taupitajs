@@ -74,15 +74,15 @@ The build automatically runs `scripts/build_webui.py` which minifies the web UI 
 3. **No networks** → captive‑portal AP immediately (`Limitrozete` with random 8-char password shown on LCD). Once user configures WiFi and NTP syncs, setup proceeds.
 4. **Networks exist** → tries NVS recall first (`WiFi.begin()` no‑args, 3 s), then saved networks (3 s each). During each attempt the globe animates with "Savienojas..." on the LCD. On connection → NTP sync (`time_sync_init()` + poll loop with animated "Sinhronizē laiku..." overlay): `configTime(0, 0, NTP)` in UTC, 500 ms settle, then up to 4 polls (1 × 500 ms, then up to 3 × 1 s). Uses separate `configTime` + `setenv("TZ")` + `tzset()` (not `configTzTime`) to avoid an ESP32‑S3 stall bug on Core 0.
 5. **All fail** → shows "Pazudis WiFi!", enters non‑blocking recovery loop.
-6. **Price fetch** — `ensure_prices` checks completeness per-day via `count_entries`, then fetches each missing date individually via `with_animation` (spinning globe). Incomplete API responses (<24 entries) are silently rejected — `merge_day` only accepts complete days. On empty data → "Cenas nav pieejamas!", retries every 2 min.
+6. **Price fetch** — `ensure_prices` checks completeness per-day via `count_entries`, comparing against `expected_hours_for_date` (a local civil day has 23, 24 or 25 hourly slots depending on DST), then fetches each missing date individually via `with_animation` (spinning globe). Responses whose entry count doesn't match the day are silently rejected — `merge_day` only accepts complete days. On empty data → "Cenas nav pieejamas!", retries every 2 min.
 7. **Success** — current hour in large font, adjacent hours in small, plus chart.
 
 ### Main loop
 
 - **WiFi recovery** — shows cached prices or "Pazudis WiFi!". Retries saved credentials every 60 s. AP button available at any time.
 - **Runtime monitor** — checks `WiFi.status()` every iteration; drops to recovery path on disconnect.
-- **Normal operation** — `ensure_prices(hour)` checks completeness per-date via `count_entries`. If today has <24 entries, fetches it. If hour ≥16 and tomorrow has <24 entries, attempts to fetch tomorrow (silently skips if API not yet ready; failed tomorrow-fetches are throttled to once per 30 min via `TOMORROW_RETRY_MS`). `merge_day` only accepts complete (24-entry) responses — partial API results are silently rejected, preserving existing data. Data older than yesterday pruned once/day after 2:00 (preserves yesterday hour 23 for the midnight cross-over view window). Buttons remain responsive (10 ms tick). Sleeps until next 5‑minute boundary; button presses wake immediately.
-- **Stale data guard** — a global `data_ok` flag gates all price display and relay logic. When data is stale or unavailable: relay stays LOW, price view hidden, ± buttons disabled. The flag is set after every successful fetch that passes data validation. `can_draw_prices_for_dates` validates the view window (current − 1 to current + 4) strictly against wallclock date‑time — every view hour must have a matching `(date, hour)` entry. If any row is missing, the display clears and falls back to an error message. Negative view hours (before midnight) are matched against yesterday's date, hours ≥24 against tomorrow's date.
+- **Normal operation** — `ensure_prices(hour)` checks completeness per-date via `count_entries` against `expected_hours_for_date` (23/24/25). If today is incomplete, it fetches it. If hour ≥16 and tomorrow is incomplete, it attempts to fetch tomorrow (silently skips if API not yet ready; failed tomorrow-fetches are throttled to once per 30 min via `TOMORROW_RETRY_MS`). `merge_day` only accepts complete (expected-length) responses — partial API results are silently rejected, preserving existing data. Data older than yesterday is pruned once/day after 2:00 (preserves yesterday hour 23 for the midnight cross-over view window). Buttons remain responsive (10 ms tick). Sleeps until next 5-minute boundary; button presses wake immediately.
+- **Stale data guard** — a global `data_ok` flag gates all price display and relay logic. When data is stale or unavailable: relay stays LOW, price view hidden, ± buttons disabled. The flag is set after every successful fetch that passes data validation. `can_draw_prices_at` validates the view window (current − 1 h to current + 4 h) against absolute UTC time — six one-hour probes, each matched via `find_price_at` against half-open `[start, start + 1 h)` entries. If any probe misses, the display clears and falls back to an error message. No `(date, hour)` arithmetic: the duplicated and the missing `03:00` hours on DST change days both work because probes are pure time offsets.
 
 ### Dual‑core (FreeRTOS)
 
@@ -97,16 +97,17 @@ The monitor task is `xTaskCreatePinnedToCore` when the AP starts, `vTaskDelete` 
 
 Single source: `teapots.cloud/elektriba/api/prices` (hourly, EUR/MWh, VAT included). Display divides by 10 for c/kWh.
 
-Fetched days are stored in a single flat `std::vector<PriceEntry>` vector. Each entry carries its own date string, so display functions search by `(date, hour)`. At midnight, the previous fetch's yesterday entries are retained so the view window (which includes the hour before current) can still display yesterday's hour 23. Data older than yesterday is pruned once/day after 2:00. `can_draw_prices_for_dates` validates the view window (current − 1 to current + 4) strictly against wallclock‑derived dates — the function takes a single `wallclock_today` parameter and internally computes yesterday/tomorrow via `offset_date_string`. Every view hour must have a matching entry; if validation fails the display falls back to an error message rather than silently dropping rows.
+Fetched days are stored in a single flat `std::vector<PriceEntry>` vector. Each entry stores its own **absolute UTC start time** (`start_utc`, seconds since epoch) plus the local civil date it belongs to. All lookups are time-based: `find_price_at` selects the entry covering a UTC instant as a half-open `[start, start + 1 h)` interval — naturally handling both the duplicated `03:00` entries on the autumn change day and the missing `03:00` on the spring one. Civil dates are used only for grouping: whole-day replacement in `merge_day`, pruning data older than yesterday after 2:00, and composing the API request date. At midnight, the previous fetch's yesterday entries are retained so the view window can still display the hour before the current one. `can_draw_prices_at` validates the view window (current − 1 h to current + 4 h) with six `find_price_at` probes against absolute time; if validation fails the display falls back to an error message rather than silently dropping rows.
 
 | Module | Role | Deps |
 |--------|------|------|
-| `include/price_api.h` | `PriceEntry` struct, `find_price()` data lookup by date+hour | none |
-| `include/price_data_utils.h` | `merge_day()` replace-by-date (only accepts 24-entry complete days), `count_entries()` completeness check | `<algorithm>`, `<cstring>`, `<cstdio>` |
-| `src/price_api_response_parser.h/.cpp` | Price API JSON → `PriceDay` | ArduinoJson |
+| `include/price_api.h` | `PriceEntry`/`HourPrice` structs (absolute `start_utc`), `find_price_at()` lookup by UTC instant, `can_draw_prices_at()` view-window probes | `<vector>` |
+| `include/time_utils.h` | ISO-8601 → UTC (`parse_iso8601_utc`), civil-date ↔ UTC arithmetic (`utc_from_civil`, `format_local_date_at`), `local_day_hours` (23/24/25-hour local days) | `<ctime>`, `<cstdio>` |
+| `include/price_data_utils.h` | `expected_hours_for_date()` per civil date, `merge_day()` replace-by-date (accepts only expected-length complete days), `count_entries()` completeness check | `<algorithm>`, `price_api.h`, `time_utils.h` |
+| `src/price_api_response_parser.h/.cpp` | Price API JSON → `PriceDay`: explicit-offset timestamps → absolute UTC, offset-less entries rejected, duplicates dropped, sorted by `start_utc` | ArduinoJson |
 | `src/price_fetch.cpp` | HTTP fetch, URL/key cache, sanitisation, override, NVS persistence | ArduinoJson, HTTPClient, Preferences |
 
-The fetch layer (`src/price_fetch.cpp`) manages a runtime cache of URL and API key. If a custom URL is saved in NVS (`api_url`), it is used; otherwise the compile‑time default `PRICE_API_DEFAULT_URL` is used. If a custom key is saved (`api_key`), it overrides the compile‑time `PRICE_API_KEY` for the default URL; custom URLs use only the saved key (no fallback). The `X‑API‑Key` header is omitted entirely when key is empty. The returned `PriceDay` is merged into `price_data` via `merge_day` only if it contains a complete 24‑entry day — partial responses are silently rejected, preventing corruption of previously cached data.
+The fetch layer (`src/price_fetch.cpp`) manages a runtime cache of URL and API key. If a custom URL is saved in NVS (`api_url`), it is used; otherwise the compile-time default `PRICE_API_DEFAULT_URL` is used. If a custom key is saved (`api_key`), it overrides the compile-time `PRICE_API_KEY` for the default URL; custom URLs use only the saved key (no fallback). The `X-API-Key` header is omitted entirely when key is empty. The returned `PriceDay` is merged into `price_data` via `merge_day` only if it contains exactly `expected_hours_for_date` entries — 23, 24 or 25 depending on DST; partial responses are silently rejected, preventing corruption of previously cached data.
 
 ---
 
@@ -157,7 +158,7 @@ Pre‑build script `scripts/build_webui.py` minifies CSS/JS/HTML, computes a SHA
 ## Project structure
 
 ```
-├── include/           # Shared headers (price_api.h, price_data_utils.h, pins.h, secrets.h, example.secrets.h)
+├── include/           # Shared headers (price_api.h, price_data_utils.h, time_utils.h, pins.h, secrets.h, example.secrets.h)
 ├── src/               # C++ source
 │   ├── main.cpp       # Boot sequence & main loop
 │   ├── wifi.cpp/h     # WiFi connection logic
@@ -196,13 +197,14 @@ Runs the format check first, then unit tests.
 
 | Test file | Cases | Coverage |
 |-----------|-------|----------|
-| `test_native/test_price_api.cpp` | 5 | API structure, parse, error handling (3 live, 2 fixture) |
-| `test_native/test_price_data.cpp` | 9 | `find_price` data lookups (date+hour match, conversion factor, edge cases) |
-| `test_native/test_lcd_display.cpp` | 13 | `can_draw_prices_for_dates` strict wallclock validation (cross-midnight, date disambiguation, yesterday crossover, edge hours, today-only rejection at late hours, partial tomorrow rejection) |
-| `test_native/test_price_data_utils.cpp` | 15 | `merge_day` (replacement, isolation, idempotency, incomplete-data rejection), `count_entries` (empty, partial, full, multi-date), combined integration |
-| `test_native/test_price_fetch.cpp` | 61 | URL cache, key fallback, sanitisation, override, cache invalidation |
+| `test_native/test_price_api.cpp` | 8 | API structure, parse, error handling (2 live, 6 fixture): UTC sort, both fall-back `03:00` entries kept, offset-less timestamps rejected |
+| `test_native/test_time_utils.cpp` | 6 | ISO‑8601 → UTC offset parsing, invalid/truncated-timestamp rejection, `local_day_hours` 23/24/25 plus impossible dates, civil-date formatting across both change days, `format_hour_range` slot labels |
+| `test_native/test_price_data.cpp` | 9 | `find_price_at` lookup by UTC instant (interval coverage, duplicated `03:00` on fall-back, conversion factor, edge cases) |
+| `test_native/test_lcd_display.cpp` | 13 | `can_draw_prices_at` view-window validation (cross-midnight, duplicated/missing `03:00` on DST days, genuinely missing DST-day slot) |
+| `test_native/test_price_data_utils.cpp` | 20 | `merge_day` (replacement, isolation, idempotency, 23/24/25-entry days accepted, wrong-count days rejected), `count_entries`, `expected_hours_for_date` |
+| `test_native/test_price_fetch.cpp` | 19 | URL cache, key fallback, sanitisation, override, cache invalidation |
 
-**61 test cases, 250 assertions.** Non‑network tests always pass. Live tests fail when the upstream API is unreachable — acts as a format-change alert.
+**75 test cases, 396 assertions.** Non‑network tests always pass. Live tests fail when the upstream API is unreachable — acts as a format-change alert.
 
 ---
 
